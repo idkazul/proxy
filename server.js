@@ -2,6 +2,8 @@ const express = require("express");
 const fetch = require("node-fetch");
 const app = express();
 
+app.use(express.json());
+
 app.get("/", (req, res) => {
   res.send("Roblox Proxy is running!");
 });
@@ -64,6 +66,76 @@ app.get("/avatar/:userId", async (req, res) => {
     const response = await fetch(url);
     const data = await response.json();
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.toString() });
+  }
+});
+
+app.get("/scan/:placeId/:userId", async (req, res) => {
+  const placeId = req.params.placeId;
+  const userId = req.params.userId;
+  const maxPages = parseInt(req.query.maxPages) || 1000;
+  const waitMs = parseFloat(req.query.delay) || 0.12;
+
+  try {
+    const avatarUrlResp = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=false`);
+    const avatarData = await avatarUrlResp.json();
+    if (!avatarData.data || !avatarData.data[0] || !avatarData.data[0].imageUrl) {
+      res.status(500).json({ error: "Failed to fetch target avatar" });
+      return;
+    }
+    const targetImage = avatarData.data[0].imageUrl;
+
+    let cursor = "";
+    let pages = 0;
+    while (true) {
+      let url = `https://games.roblox.com/v1/games/${placeId}/servers/Public?limit=100`;
+      if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+      const serverResp = await fetch(url);
+      const serverData = await serverResp.json();
+      if (!serverData || !serverData.data) {
+        res.status(500).json({ error: "Failed to fetch servers" });
+        return;
+      }
+
+      for (const server of serverData.data) {
+        if (!server.playerTokens || server.playerTokens.length === 0) continue;
+        const payload = server.playerTokens.map(token => {
+          return {
+            requestId: "0:" + token + ":AvatarHeadshot:150x150:png:regular",
+            type: "AvatarHeadShot",
+            token: token,
+            format: "png",
+            size: "150x150"
+          };
+        });
+
+        const batchResp = await fetch("https://thumbnails.roblox.com/v1/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const batchData = await batchResp.json();
+        if (batchData && batchData.data) {
+          for (let i = 0; i < batchData.data.length; i++) {
+            try {
+              if (batchData.data[i].imageUrl && batchData.data[i].imageUrl === targetImage) {
+                res.json({ found: true, placeId: placeId, serverId: server.id });
+                return;
+              }
+            } catch (e) { }
+          }
+        }
+        await new Promise(r => setTimeout(r, waitMs * 1000));
+      }
+
+      pages++;
+      if (!serverData.nextPageCursor || pages >= maxPages) break;
+      cursor = serverData.nextPageCursor;
+      await new Promise(r => setTimeout(r, waitMs * 1000));
+    }
+
+    res.json({ found: false });
   } catch (err) {
     res.status(500).json({ error: err.toString() });
   }
