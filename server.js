@@ -23,7 +23,7 @@ app.get("/servers/:placeId", async (req, res) => {
 
 app.get("/userid/:username", async (req, res) => {
   const username = req.params.username;
-  const url = `https://users.roblox.com/v1/usernames/users`;
+  const url = "https://users.roblox.com/v1/usernames/users";
   const payload = { usernames: [username], excludeBannedUsers: true };
   try {
     const response = await fetch(url, {
@@ -44,7 +44,7 @@ app.get("/userid/:username", async (req, res) => {
 
 app.get("/presence/:userId", async (req, res) => {
   const userId = req.params.userId;
-  const url = `https://presence.roblox.com/v1/presence/users`;
+  const url = "https://presence.roblox.com/v1/presence/users";
   const payload = { userIds: [parseInt(userId)] };
   try {
     const response = await fetch(url, {
@@ -65,7 +65,11 @@ app.get("/avatar/:userId", async (req, res) => {
   try {
     const response = await fetch(url);
     const data = await response.json();
-    res.json(data);
+    if (data.data && data.data[0] && data.data[0].imageUrl) {
+      res.json({ imageUrl: data.data[0].imageUrl });
+    } else {
+      res.status(404).json({ error: "Failed to fetch avatar" });
+    }
   } catch (err) {
     res.status(500).json({ error: err.toString() });
   }
@@ -118,12 +122,10 @@ app.get("/scan/:placeId/:userId", async (req, res) => {
         const batchData = await batchResp.json();
         if (batchData && batchData.data) {
           for (let i = 0; i < batchData.data.length; i++) {
-            try {
-              if (batchData.data[i].imageUrl && batchData.data[i].imageUrl === targetImage) {
-                res.json({ found: true, placeId: placeId, serverId: server.id });
-                return;
-              }
-            } catch (e) { }
+            if (batchData.data[i].imageUrl && batchData.data[i].imageUrl === targetImage) {
+              res.json({ found: true, placeId: placeId, serverId: server.id });
+              return;
+            }
           }
         }
         await new Promise(r => setTimeout(r, waitMs * 1000));
