@@ -1,123 +1,63 @@
-const express = require("express");
-const fetch = require("node-fetch");
-const app = express();
-app.use(express.json());
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-app.get("/", (req, res) => {
-  res.send("Roblox Proxy is running!");
-});
+local sniperRemote = ReplicatedStorage:FindFirstChild("SniperRemote")
+if sniperRemote then
+	if not sniperRemote:IsA("RemoteFunction") then
+		sniperRemote:Destroy()
+		sniperRemote = Instance.new("RemoteFunction")
+		sniperRemote.Name = "SniperRemote"
+		sniperRemote.Parent = ReplicatedStorage
+	end
+else
+	sniperRemote = Instance.new("RemoteFunction")
+	sniperRemote.Name = "SniperRemote"
+	sniperRemote.Parent = ReplicatedStorage
+end
 
-app.get("/servers/:placeId", async (req, res) => {
-  const placeId = req.params.placeId;
-  const cursor = req.query.cursor || "";
-  const url = `https://games.roblox.com/v1/games/${encodeURIComponent(placeId)}/servers/Public?limit=100&cursor=${encodeURIComponent(cursor)}`;
-  try {
-    const response = await fetch(url);
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.toString() });
-  }
-});
+local sniperEvent = ReplicatedStorage:FindFirstChild("SniperEvent")
+if not sniperEvent then
+	sniperEvent = Instance.new("RemoteEvent")
+	sniperEvent.Name = "SniperEvent"
+	sniperEvent.Parent = ReplicatedStorage
+end
 
-app.get("/presence/:userId", async (req, res) => {
-  const userId = req.params.userId;
-  const url = "https://presence.roblox.com/v1/presence/users";
-  const payload = { userIds: [parseInt(userId)] };
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.toString() });
-  }
-});
+local PROXY_URL = "https://proxy-wtgw.onrender.com"
 
-app.get("/avatar/:userId", async (req, res) => {
-  const userId = req.params.userId;
-  const url = `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${encodeURIComponent(userId)}&size=150x150&format=Png&isCircular=false`;
-  try {
-    const response = await fetch(url);
-    const data = await response.json();
-    if (data.data && data.data[0] && data.data[0].imageUrl) {
-      res.json({ imageUrl: data.data[0].imageUrl });
-    } else {
-      res.status(404).json({ error: "Failed to fetch avatar" });
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.toString() });
-  }
-});
+local function proxyGet(url)
+	local ok, res = pcall(function()
+		return HttpService:GetAsync(url, true)
+	end)
+	if not ok then
+		return { error = tostring(res) }
+	end
 
-app.get("/scan/:placeId/:userId", async (req, res) => {
-  const placeId = req.params.placeId;
-  const userId = req.params.userId;
-  const maxPages = parseInt(req.query.maxPages) || 1000;
-  const waitMs = parseFloat(req.query.delay) || 0.12;
+	local ok2, decoded = pcall(function()
+		return HttpService:JSONDecode(res)
+	end)
+	if not ok2 then
+		return { error = tostring(decoded) }
+	end
 
-  try {
-    const avatarUrlResp = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${encodeURIComponent(userId)}&size=150x150&format=Png&isCircular=false`);
-    const avatarData = await avatarUrlResp.json();
-    if (!avatarData.data || !avatarData.data[0] || !avatarData.data[0].imageUrl) {
-      res.status(500).json({ error: "Failed to fetch target avatar" });
-      return;
-    }
-    const targetImage = avatarData.data[0].imageUrl;
+	return decoded
+end
 
-    let cursor = "";
-    let pages = 0;
-    while (true) {
-      let url = `https://games.roblox.com/v1/games/${encodeURIComponent(placeId)}/servers/Public?limit=100`;
-      if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-      const serverResp = await fetch(url);
-      const serverData = await serverResp.json();
-      if (!serverData || !serverData.data) {
-        res.status(500).json({ error: "Failed to fetch servers" });
-        return;
-      }
+sniperRemote.OnServerInvoke = function(player, action, data)
+	if action == "scanForPlayer" then
+		local placeId = tostring(data.placeId or "")
+		local userId = tostring(data.userId or "")
+		local maxPages = tonumber(data.maxPages) or 200
+		local delay = tonumber(data.delay) or 0.12
 
-      for (const server of serverData.data) {
-        if (!server.playerTokens || server.playerTokens.length === 0) continue;
-        const payload = server.playerTokens.map(token => ({
-          requestId: "0:" + token + ":AvatarHeadshot:150x150:png:regular",
-          type: "AvatarHeadShot",
-          token: token,
-          format: "png",
-          size: "150x150"
-        }));
+		local endpoint = string.format("%s/scan/%s/%s?maxPages=%d&delay=%s", PROXY_URL, placeId, userId, maxPages, tostring(delay))
+		local result = proxyGet(endpoint)
 
-        const batchResp = await fetch("https://thumbnails.roblox.com/v1/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const batchData = await batchResp.json();
-        if (batchData && batchData.data) {
-          for (let i = 0; i < batchData.data.length; i++) {
-            if (batchData.data[i] && batchData.data[i].imageUrl && batchData.data[i].imageUrl === targetImage) {
-              res.json({ found: true, placeId: placeId, serverId: server.id });
-              return;
-            }
-          }
-        }
-        await new Promise(r => setTimeout(r, waitMs * 1000));
-      }
+		if result and result.progress then
+			sniperEvent:FireClient(player, tonumber(result.progress) or 0)
+		end
 
-      pages++;
-      if (!serverData.nextPageCursor || pages >= maxPages) break;
-      cursor = serverData.nextPageCursor;
-      await new Promise(r => setTimeout(r, waitMs * 1000));
-    }
+		return result
+	end
 
-    res.json({ found: false });
-  } catch (err) {
-    res.status(500).json({ error: err.toString() });
-  }
-});
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log("Proxy running on port " + port));
+	return nil
+end
